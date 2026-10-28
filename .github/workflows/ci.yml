@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Throwaway password for a container that only lives for this job.
+          MSSQL_SA_PASSWORD: "CiOnly_Passw0rd!"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'CiOnly_Passw0rd!' -Q 'SELECT 1' -b"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      SQLMCP_TEST_SERVER: "Server=localhost,1433;User Id=sa;Password=CiOnly_Passw0rd!;TrustServerCertificate=true"
+      DOTNET_NOLOGO: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Test (unit, integration and end-to-end MCP)
+        run: dotnet test --no-build -c Release
+
+      - name: Pack .NET tool
+        run: dotnet pack src/SqlMcp --no-build -c Release -o artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sql-mcp-nupkg
+          path: artifacts/*.nupkg
